@@ -231,9 +231,9 @@ def interpret_consistency(std_minutes):
 if __name__ == "__main__":
     
     # Test sleep quality analysis
-    # sleep_quality_analysis(daily_summary)
+    sleep_quality_analysis(daily_summary)
     
     # Test sleep timing analysis
-    timing_stats = sleep_timing_analysis(sleep_df)
+    # timing_stats = sleep_timing_analysis(sleep_df)
     
     pass

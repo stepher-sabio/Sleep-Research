@@ -118,28 +118,15 @@ def timing_analysis(sleep_df):
 def process_single_subject(file_path):
     """
     Process a single subject file and return all statistics.
-    
-    Parameters:
-    -----------
-    file_path : str
-        Path to the CSV file
-    
-    Returns:
-    --------
-    dict : Dictionary with all statistics for this subject
     """
-    
-    # Extract subject ID from filename
     from pathlib import Path
-    subject_id = Path(file_path).stem  # e.g., "TOSS_102_16mos"
+    
+    subject_id = Path(file_path).stem
     
     # Load data
     df = pd.read_csv(file_path)
-    
-    # Filter to SLEEP only
     sleep_df = df[df['interval_type'] == 'SLEEP'].copy()
     
-    # Check if we have data
     if len(sleep_df) == 0:
         return None
     
@@ -165,17 +152,21 @@ def process_single_subject(file_path):
     # Combine into one row
     result = {
         'subject_id': subject_id,
-        **stats  # Unpack all stats
+        **stats
     }
     
     # Add timing stats for nighttime sleep (if exists)
     if 'Nighttime Sleep' in timing_stats:
         night = timing_stats['Nighttime Sleep']
         result['nighttime_count'] = night['count']
-        result['nighttime_bedtime_mean'] = night['start_time_mean']
-        result['nighttime_bedtime_std'] = night['start_time_std']
-        result['nighttime_waketime_mean'] = night['end_time_mean']
-        result['nighttime_waketime_std'] = night['end_time_std']
+        
+        # ⭐ CONVERT TO CLOCK TIME
+        result['nighttime_bedtime_mean'] = format_time(night['start_time_mean'])
+        result['nighttime_bedtime_std_minutes'] = round(night['start_time_std'] * 60, 1)
+        
+        result['nighttime_waketime_mean'] = format_time(night['end_time_mean'])
+        result['nighttime_waketime_std_minutes'] = round(night['end_time_std'] * 60, 1)
+        
         result['nighttime_duration_mean'] = night['duration_mean']
     
     return result
