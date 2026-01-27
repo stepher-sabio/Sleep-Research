@@ -1,6 +1,6 @@
 """
 batch_visualize.py
-Generate visualizations for all subjects
+Generate visualizations for all subjects - SIMPLIFIED with DEBUG
 """
 
 import pandas as pd
@@ -34,7 +34,7 @@ failed = 0
 for file_path in Path(input_folder).glob('*.csv'):
     
     subject_id = file_path.stem
-    print(f"Processing: {subject_id}...", end=' ')
+    print(f"\nProcessing: {subject_id}...")
     
     try:
         # Load data
@@ -42,11 +42,13 @@ for file_path in Path(input_folder).glob('*.csv'):
         sleep_df = df[df['interval_type'] == 'SLEEP'].copy()
         
         if len(sleep_df) == 0:
-            print("⚠ No sleep data")
+            print("  ⚠ No sleep data")
             failed += 1
             continue
         
-        # ⭐ CLEAN DATA: Convert numeric columns and drop invalid rows
+        print(f"  Found {len(sleep_df)} sleep intervals")
+        
+        # Clean data
         numeric_columns = ['sleep_time', 'duration', 'efficiency', 'onset_latency', 
                           'fragmentation', 'wake_time']
         
@@ -54,13 +56,27 @@ for file_path in Path(input_folder).glob('*.csv'):
             if col in sleep_df.columns:
                 sleep_df[col] = pd.to_numeric(sleep_df[col], errors='coerce')
         
-        # Drop rows with missing critical data
         sleep_df = sleep_df.dropna(subset=['sleep_time', 'start_date', 'start_time'])
         
         if len(sleep_df) == 0:
-            print("⚠ No valid sleep data after cleaning")
+            print("  ⚠ No valid sleep data")
             failed += 1
             continue
+        
+        print(f"  After cleaning: {len(sleep_df)} valid intervals")
+        
+        # ⭐ DEBUG: Show sleep times
+        if 'bedtime' not in sleep_df.columns:
+            sleep_df['bedtime'] = pd.to_datetime(
+                sleep_df['start_date'] + ' ' + sleep_df['start_time']
+            )
+            sleep_df['waketime'] = pd.to_datetime(
+                sleep_df['end_date'] + ' ' + sleep_df['end_time']
+            )
+        
+        print("  Sleep periods:")
+        for _, row in sleep_df.iterrows():
+            print(f"    {row['start_date']}: {row['start_time']} - {row['end_time']} ({row['sleep_time']:.0f} min)")
         
         # Create daily summary
         daily_summary = sleep_df.groupby('start_date').agg({
@@ -74,12 +90,10 @@ for file_path in Path(input_folder).glob('*.csv'):
         }).reset_index()
         
         daily_summary.rename(columns={'interval_number': 'num_sleep_intervals'}, inplace=True)
-        
-        # Drop any rows with NaN in critical columns
         daily_summary = daily_summary.dropna(subset=['sleep_time'])
         
         if len(daily_summary) == 0:
-            print("⚠ No valid daily data")
+            print("  ⚠ No valid daily data")
             failed += 1
             continue
         
@@ -88,6 +102,8 @@ for file_path in Path(input_folder).glob('*.csv'):
         os.makedirs(subject_folder, exist_ok=True)
         
         # Generate plots
+        print("  Generating plots...", end=' ')
+        
         plot_sleep_raster(sleep_df, subject_id, 
                          save_path=f'{subject_folder}/{subject_id}_raster.png')
         
@@ -101,14 +117,14 @@ for file_path in Path(input_folder).glob('*.csv'):
                                save_path=f'{subject_folder}/{subject_id}_timing.png')
         
         print("✓")
+        print(f"  ✓ {subject_id} completed")
         processed += 1
         
     except Exception as e:
-        print(f"✗ Error: {e}")
+        print(f"  ✗ Error: {e}")
         failed += 1
-        # Uncomment for debugging:
-        # import traceback
-        # traceback.print_exc()
+        import traceback
+        traceback.print_exc()
 
 print("\n" + "="*70)
 print("SUMMARY")

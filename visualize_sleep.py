@@ -19,12 +19,13 @@ plt.rcParams['font.size'] = 10
 
 def plot_sleep_raster(sleep_df, subject_id, save_path=None):
     """
-    Create a sleep raster plot (actogram) showing NIGHTTIME SLEEP ONLY.
+    Create a sleep raster plot showing ALL sleep periods.
+    Dynamic x-axis ensures all sleep is visible.
     
     Parameters:
     -----------
     sleep_df : pandas.DataFrame
-        DataFrame with SLEEP intervals, must have bedtime, waketime columns
+        DataFrame with SLEEP intervals
     subject_id : str
         Subject identifier for title
     save_path : str, optional
@@ -45,52 +46,79 @@ def plot_sleep_raster(sleep_df, subject_id, save_path=None):
             sleep_df['end_date'] + ' ' + sleep_df['end_time']
         )
     
-    # ⭐ FILTER TO NIGHTTIME SLEEP ONLY (>180 minutes = 3 hours)
-    nighttime_sleep = sleep_df[sleep_df['sleep_time'] >= 180].copy()
-    
-    if len(nighttime_sleep) == 0:
-        print(f"Warning: No nighttime sleep found for {subject_id}")
-        return None, None
-    
     # Get unique dates
-    dates = nighttime_sleep['start_date'].unique()
+    dates = sleep_df['start_date'].unique()
     dates = sorted(dates)
     
     # Create figure
     fig, ax = plt.subplots(figsize=(14, max(6, len(dates) * 0.4)))
     
-    # Color for nighttime sleep
-    color = '#2E86AB'
+    # Single color for all sleep
+    color = '#2E86AB'  # Blue
     
-    # Find min and max hours to set appropriate x-axis limits
+    # ⭐ Track all bed and wake hours to determine x-axis range
     all_bed_hours = []
     all_wake_hours = []
+    all_plot_positions = []  # Track actual plot positions
     
-    # Plot each sleep period
+    # First pass: collect all hours
     for i, date in enumerate(dates):
-        day_sleep = nighttime_sleep[nighttime_sleep['start_date'] == date]
+        day_sleep = sleep_df[sleep_df['start_date'] == date]
         
         for _, row in day_sleep.iterrows():
-            # Convert times to hours for plotting
             bed_hour = row['bedtime'].hour + row['bedtime'].minute / 60
             wake_hour = row['waketime'].hour + row['waketime'].minute / 60
             
             all_bed_hours.append(bed_hour)
             all_wake_hours.append(wake_hour)
             
+            # Track where we'll actually plot
+            if wake_hour < bed_hour:  # Overnight
+                all_plot_positions.extend([bed_hour, 24, 24 + wake_hour])
+            else:  # Same day
+                all_plot_positions.extend([bed_hour, wake_hour])
+    
+    # Determine x-axis range
+    # Find earliest bedtime and latest wake time
+    earliest_bed = min(all_bed_hours)
+    latest_wake = max(all_wake_hours)
+    
+    # Check if any sleep crosses midnight
+    has_overnight = any(w < b for w, b in zip(all_wake_hours, all_bed_hours))
+    
+    if has_overnight:
+        # Need to show across midnight
+        # Start from earliest bedtime (usually evening)
+        # Extend past midnight to show wake times
+        x_min = max(0, earliest_bed - 1)
+        x_max = 24 + max(all_wake_hours) + 1
+    else:
+        # All sleep is within same calendar day
+        x_min = max(0, earliest_bed - 1)
+        x_max = min(24, latest_wake + 1)
+    
+    # Plot each sleep period
+    for i, date in enumerate(dates):
+        day_sleep = sleep_df[sleep_df['start_date'] == date]
+        
+        for _, row in day_sleep.iterrows():
+            # Convert times to hours for plotting
+            bed_hour = row['bedtime'].hour + row['bedtime'].minute / 60
+            wake_hour = row['waketime'].hour + row['waketime'].minute / 60
+            
             # Handle overnight sleep (crosses midnight)
             if wake_hour < bed_hour:
-                # Split into two bars
+                # Split into two bars to show continuity across midnight
                 # Part 1: bedtime to midnight
                 duration1 = 24 - bed_hour
                 ax.barh(i, duration1, left=bed_hour, height=0.8,
                        color=color, alpha=0.8, edgecolor='white', linewidth=0.5)
                 
-                # Part 2: midnight to wake time
-                ax.barh(i, wake_hour, left=0, height=0.8,
+                # Part 2: midnight to wake time (add 24 to plot on "next day" side)
+                ax.barh(i, wake_hour, left=24, height=0.8,
                        color=color, alpha=0.8, edgecolor='white', linewidth=0.5)
             else:
-                # Single bar (daytime sleep that doesn't cross midnight)
+                # Daytime sleep: single bar
                 duration = wake_hour - bed_hour
                 ax.barh(i, duration, left=bed_hour, height=0.8,
                        color=color, alpha=0.8, edgecolor='white', linewidth=0.5)
@@ -100,53 +128,34 @@ def plot_sleep_raster(sleep_df, subject_id, save_path=None):
     ax.set_yticklabels(dates)
     ax.set_xlabel('Time of Day', fontsize=12, fontweight='bold')
     ax.set_ylabel('Date', fontsize=12, fontweight='bold')
-    ax.set_title(f'Sleep Raster Plot - Nighttime Sleep Only - {subject_id}', 
+    ax.set_title(f'Sleep Raster Plot - {subject_id}', 
                 fontsize=14, fontweight='bold', pad=20)
     
-    # ⭐ DYNAMIC X-AXIS: Set based on actual sleep times
-    # Find earliest bedtime and latest wake time
-    min_bed = min(all_bed_hours)
-    max_wake = max(all_wake_hours)
+    # ⭐ Set x-axis limits based on actual data
+    ax.set_xlim(x_min, x_max)
     
-    # Adjust for overnight sleep
-    # Typical: bedtime around 18-23 (6 PM - 11 PM), wake around 0-10 (12 AM - 10 AM)
-    if max_wake < 12:  # Wake time is in morning (AM)
-        # Extend to show full overnight period
-        x_min = max(0, min_bed - 1)  # Start 1 hour before earliest bedtime
-        x_max = min(36, max_wake + 25)  # Extend to show wake time (add 24 for next day + 1 padding)
-        
-        # Create tick labels
-        hour_ticks = []
-        hour_labels = []
-        
-        # Evening hours (6 PM onwards)
-        for h in range(int(x_min), 24):
-            if h % 3 == 0:  # Every 3 hours
-                hour_ticks.append(h)
-                pm_hour = h - 12 if h > 12 else h
-                hour_labels.append(f'{pm_hour} PM' if h >= 12 else f'{h} AM')
-        
-        # Morning hours (12 AM onwards)
-        for h in range(0, int(max_wake) + 2):
-            adjusted_h = h + 24  # Add 24 for plotting
-            if h % 3 == 0:
-                hour_ticks.append(adjusted_h)
-                hour_labels.append(f'{h if h != 0 else 12} AM')
-        
-        ax.set_xlim(x_min, x_max)
-        ax.set_xticks(hour_ticks)
-        ax.set_xticklabels(hour_labels, rotation=0)
+    # ⭐ Create dynamic tick labels
+    # Determine appropriate tick spacing
+    x_range = x_max - x_min
+    if x_range <= 12:
+        tick_interval = 2
+    elif x_range <= 24:
+        tick_interval = 3
     else:
-        # Daytime sleep (unusual but handle it)
-        x_min = max(0, min_bed - 1)
-        x_max = min(24, max_wake + 1)
-        ax.set_xlim(x_min, x_max)
+        tick_interval = 3
+    
+    hour_ticks = []
+    hour_labels = []
+    
+    current_tick = int(x_min)
+    while current_tick <= x_max:
+        hour_ticks.append(current_tick)
         
-        # Standard 24-hour ticks
-        hour_ticks = list(range(int(x_min), int(x_max) + 1, 3))
-        hour_labels = []
-        for h in hour_ticks:
-            if h == 0 or h == 24:
+        # Determine label
+        if current_tick >= 24:
+            # Next day hours
+            h = current_tick - 24
+            if h == 0:
                 hour_labels.append('12 AM')
             elif h < 12:
                 hour_labels.append(f'{h} AM')
@@ -154,11 +163,26 @@ def plot_sleep_raster(sleep_df, subject_id, save_path=None):
                 hour_labels.append('12 PM')
             else:
                 hour_labels.append(f'{h-12} PM')
-        ax.set_xticks(hour_ticks)
-        ax.set_xticklabels(hour_labels)
+        else:
+            # Same day hours
+            h = current_tick
+            if h == 0:
+                hour_labels.append('12 AM')
+            elif h < 12:
+                hour_labels.append(f'{int(h)} AM')
+            elif h == 12:
+                hour_labels.append('12 PM')
+            else:
+                hour_labels.append(f'{int(h-12)} PM')
+        
+        current_tick += tick_interval
     
-    # Add vertical line for midnight
-    ax.axvline(x=24, color='gray', linestyle='--', alpha=0.3, linewidth=1, label='Midnight')
+    ax.set_xticks(hour_ticks)
+    ax.set_xticklabels(hour_labels, rotation=0)
+    
+    # Add vertical line for midnight (if visible)
+    if x_min < 24 < x_max:
+        ax.axvline(x=24, color='gray', linestyle='--', alpha=0.3, linewidth=1.5)
     
     # Grid
     ax.grid(axis='x', alpha=0.3)
@@ -170,6 +194,182 @@ def plot_sleep_raster(sleep_df, subject_id, save_path=None):
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
     
     return fig, ax
+
+
+def analyze_naps_vs_nighttime(sleep_df, subject_id):
+    """
+    Separate analysis for naps vs nighttime sleep.
+    Simplified to just two categories.
+    
+    Parameters:
+    -----------
+    sleep_df : pandas.DataFrame
+        DataFrame with SLEEP intervals
+    subject_id : str
+        Subject identifier
+    
+    Returns:
+    --------
+    dict : Dictionary with separate statistics for naps and nighttime
+    """
+    
+    # Prepare data
+    if 'bedtime' not in sleep_df.columns:
+        sleep_df = sleep_df.copy()
+        sleep_df['bedtime'] = pd.to_datetime(
+            sleep_df['start_date'] + ' ' + sleep_df['start_time']
+        )
+        sleep_df['waketime'] = pd.to_datetime(
+            sleep_df['end_date'] + ' ' + sleep_df['end_time']
+        )
+    
+    # ⭐ SIMPLIFIED categorization
+    def categorize_sleep(row):
+        duration = row['sleep_time']
+        try:
+            duration = float(duration)
+        except (ValueError, TypeError):
+            return "Unknown"
+        
+        if pd.isna(duration):
+            return "Unknown"
+        
+        # Simple: Nighttime (>= 180 min) or Nap (< 180 min)
+        if duration >= 180:
+            return "Nighttime Sleep"
+        else:
+            return "Nap"
+    
+    sleep_df['sleep_category'] = sleep_df.apply(categorize_sleep, axis=1)
+    
+    # Separate nighttime and naps
+    nighttime = sleep_df[sleep_df['sleep_category'] == 'Nighttime Sleep']
+    naps = sleep_df[sleep_df['sleep_category'] == 'Nap']
+    
+    results = {'subject_id': subject_id}
+    
+    # Nighttime statistics
+    if len(nighttime) > 0:
+        nighttime['bedtime_hour'] = nighttime['bedtime'].dt.hour + nighttime['bedtime'].dt.minute / 60
+        nighttime['waketime_hour'] = nighttime['waketime'].dt.hour + nighttime['waketime'].dt.minute / 60
+        
+        results['nighttime'] = {
+            'count': len(nighttime),
+            'duration_mean': nighttime['sleep_time'].mean(),
+            'duration_std': nighttime['sleep_time'].std(),
+            'efficiency_mean': nighttime['efficiency'].mean(),
+            'efficiency_std': nighttime['efficiency'].std(),
+            'fragmentation_mean': nighttime['fragmentation'].mean(),
+            'fragmentation_std': nighttime['fragmentation'].std(),
+            'onset_latency_mean': nighttime['onset_latency'].mean(),
+            'wake_time_mean': nighttime['wake_time'].mean(),
+            'bedtime_mean': nighttime['bedtime_hour'].mean(),
+            'waketime_mean': nighttime['waketime_hour'].mean()
+        }
+    else:
+        results['nighttime'] = None
+    
+    # Nap statistics (simplified - no breakdown by type)
+    if len(naps) > 0:
+        naps['start_hour'] = naps['bedtime'].dt.hour + naps['bedtime'].dt.minute / 60
+        naps['end_hour'] = naps['waketime'].dt.hour + naps['waketime'].dt.minute / 60
+        
+        # Get unique dates to calculate naps per day
+        total_days = sleep_df['start_date'].nunique()
+        
+        results['naps'] = {
+            'total_count': len(naps),
+            'naps_per_day': len(naps) / total_days,
+            'duration_mean': naps['sleep_time'].mean(),
+            'duration_std': naps['sleep_time'].std(),
+            'efficiency_mean': naps['efficiency'].mean(),
+            'efficiency_std': naps['efficiency'].std(),
+            'fragmentation_mean': naps['fragmentation'].mean(),
+            'fragmentation_std': naps['fragmentation'].std(),
+            'onset_latency_mean': naps['onset_latency'].mean(),
+            'start_time_mean': naps['start_hour'].mean(),
+            'start_time_std': naps['start_hour'].std(),
+            'end_time_mean': naps['end_hour'].mean(),
+            'end_time_std': naps['end_hour'].std()
+        }
+    else:
+        results['naps'] = None
+    
+    return results
+
+
+def print_nap_nighttime_summary(results):
+    """
+    Print formatted summary of nap vs nighttime analysis.
+    Simplified version with just two categories.
+    
+    Parameters:
+    -----------
+    results : dict
+        Results from analyze_naps_vs_nighttime()
+    """
+    
+    print("\n" + "="*70)
+    print(f"NAP vs NIGHTTIME ANALYSIS - {results['subject_id']}")
+    print("="*70)
+    
+    # Nighttime statistics
+    if results['nighttime']:
+        night = results['nighttime']
+        print("\n--- NIGHTTIME SLEEP ---")
+        print(f"  Count: {night['count']} nights")
+        print(f"  Duration: {night['duration_mean']:.1f} ± {night['duration_std']:.1f} minutes ({night['duration_mean']/60:.1f} hours)")
+        print(f"  Efficiency: {night['efficiency_mean']:.1f}% ± {night['efficiency_std']:.1f}%")
+        print(f"  Fragmentation: {night['fragmentation_mean']:.2f} ± {night['fragmentation_std']:.2f}")
+        print(f"  Onset Latency: {night['onset_latency_mean']:.1f} minutes")
+        print(f"  WASO: {night['wake_time_mean']:.1f} minutes")
+        print(f"  Bedtime: {format_time(night['bedtime_mean'])}")
+        print(f"  Wake Time: {format_time(night['waketime_mean'])}")
+    else:
+        print("\n--- NIGHTTIME SLEEP ---")
+        print("  No nighttime sleep data")
+    
+    # Nap statistics (simplified - no type breakdown)
+    if results['naps']:
+        nap = results['naps']
+        print("\n--- NAPS ---")
+        print(f"  Total Naps: {nap['total_count']}")
+        print(f"  Naps per Day: {nap['naps_per_day']:.1f}")
+        print(f"  Duration: {nap['duration_mean']:.1f} ± {nap['duration_std']:.1f} minutes")
+        print(f"  Efficiency: {nap['efficiency_mean']:.1f}% ± {nap['efficiency_std']:.1f}%")
+        print(f"  Fragmentation: {nap['fragmentation_mean']:.2f} ± {nap['fragmentation_std']:.2f}")
+        print(f"  Onset Latency: {nap['onset_latency_mean']:.1f} minutes")
+        print(f"  Onset Time: {format_time(nap['start_time_mean'])} ± {nap['start_time_std']*60:.0f} min")
+        print(f"  End Time: {format_time(nap['end_time_mean'])} ± {nap['end_time_std']*60:.0f} min")
+    else:
+        print("\n--- NAPS ---")
+        print("  No naps detected")
+    
+    print("="*70 + "\n")
+
+
+def format_time(hour_decimal):
+    """Convert decimal hour to readable time format."""
+    if pd.isna(hour_decimal):
+        return "N/A"
+    
+    hours = int(hour_decimal)
+    minutes = int((hour_decimal - hours) * 60)
+    
+    if hours == 0:
+        period = "AM"
+        display_hour = 12
+    elif hours < 12:
+        period = "AM"
+        display_hour = hours
+    elif hours == 12:
+        period = "PM"
+        display_hour = 12
+    else:
+        period = "PM"
+        display_hour = hours - 12
+    
+    return f"{display_hour}:{minutes:02d} {period}"
 
 
 def plot_sleep_duration(daily_summary, subject_id, save_path=None):
@@ -301,7 +501,8 @@ def plot_sleep_quality(daily_summary, subject_id, save_path=None):
 
 def plot_timing_consistency(sleep_df, subject_id, save_path=None):
     """
-    Create scatter plot showing bedtime and wake time consistency.
+    Create plot showing sleep timing categorized by time of day.
+    Separate panels for each category.
     
     Parameters:
     -----------
@@ -314,7 +515,7 @@ def plot_timing_consistency(sleep_df, subject_id, save_path=None):
     
     Returns:
     --------
-    fig, ax : matplotlib figure and axis objects
+    fig, axes : matplotlib figure and axis objects
     """
     
     # Prepare data
@@ -327,63 +528,103 @@ def plot_timing_consistency(sleep_df, subject_id, save_path=None):
             sleep_df['end_date'] + ' ' + sleep_df['end_time']
         )
     
-    # Filter to nighttime sleep only (>180 min)
-    nighttime = sleep_df[sleep_df['sleep_time'] >= 180].copy()
+    # Extract times as hours
+    sleep_df['start_hour'] = sleep_df['bedtime'].dt.hour + sleep_df['bedtime'].dt.minute / 60
+    sleep_df['end_hour'] = sleep_df['waketime'].dt.hour + sleep_df['waketime'].dt.minute / 60
     
-    if len(nighttime) == 0:
-        print(f"No nighttime sleep found for {subject_id}")
+    # Categorize by START time
+    def categorize_by_time(start_hour):
+        if 10 <= start_hour < 12:
+            return "Morning"
+        elif 12 <= start_hour < 18:
+            return "Afternoon"
+        elif 18 <= start_hour < 22:
+            return "Evening"
+        else:
+            return "Night/Other"
+    
+    sleep_df['time_category'] = sleep_df['start_hour'].apply(categorize_by_time)
+    
+    # Count categories present
+    categories_present = sleep_df['time_category'].unique()
+    n_categories = len(categories_present)
+    
+    if n_categories == 0:
+        print(f"No sleep data for {subject_id}")
         return None, None
     
-    # Extract times as hours
-    nighttime['bedtime_hour'] = nighttime['bedtime'].dt.hour + nighttime['bedtime'].dt.minute / 60
-    nighttime['waketime_hour'] = nighttime['waketime'].dt.hour + nighttime['waketime'].dt.minute / 60
+    # Create subplots - one per category
+    fig, axes = plt.subplots(n_categories, 1, figsize=(12, 3 * n_categories), 
+                            sharex=True, squeeze=False)
+    axes = axes.flatten()
     
-    # Create figure
-    fig, ax = plt.subplots(figsize=(10, 6))
+    # Color map
+    colors = {
+        'Morning': '#A23B72',
+        'Afternoon': '#F18F01',
+        'Evening': '#2E86AB',
+        'Night/Other': '#808080'
+    }
     
-    dates = pd.to_datetime(nighttime['start_date'])
+    # Plot each category
+    for idx, category in enumerate(sorted(categories_present)):
+        ax = axes[idx]
+        cat_data = sleep_df[sleep_df['time_category'] == category]
+        
+        if len(cat_data) == 0:
+            continue
+        
+        cat_dates = pd.to_datetime(cat_data['start_date'])
+        color = colors.get(category, '#808080')
+        
+        # Plot start and end times
+        ax.scatter(cat_dates, cat_data['start_hour'], 
+                  s=100, alpha=0.7, color=color, marker='o',
+                  label='Start Time', edgecolors='white', linewidth=1.5)
+        
+        ax.scatter(cat_dates, cat_data['end_hour'], 
+                  s=100, alpha=0.7, color=color, marker='s',
+                  label='End Time', edgecolors='white', linewidth=1.5)
+        
+        # Mean lines
+        mean_start = cat_data['start_hour'].mean()
+        mean_end = cat_data['end_hour'].mean()
+        
+        ax.axhline(y=mean_start, color=color, linestyle='--', alpha=0.6,
+                  linewidth=2, label=f'Mean Start: {format_time(mean_start)}')
+        ax.axhline(y=mean_end, color=color, linestyle=':', alpha=0.6,
+                  linewidth=2, label=f'Mean End: {format_time(mean_end)}')
+        
+        # Formatting
+        ax.set_ylabel('Time', fontsize=11, fontweight='bold')
+        ax.set_title(f'{category} Sleep (n={len(cat_data)})', 
+                    fontsize=12, fontweight='bold', color=color)
+        
+        # Y-axis
+        y_ticks = [0, 6, 12, 18, 24]
+        y_labels = ['12 AM', '6 AM', '12 PM', '6 PM', '12 AM']
+        ax.set_yticks(y_ticks)
+        ax.set_yticklabels(y_labels)
+        ax.set_ylim(0, 24)
+        
+        ax.legend(loc='upper right', fontsize=9)
+        ax.grid(True, alpha=0.3)
     
-    # Plot bedtime and wake time
-    ax.scatter(dates, nighttime['bedtime_hour'], s=100, alpha=0.7,
-              color='#2E86AB', marker='o', label='Bedtime', edgecolors='white', linewidth=1.5)
-    ax.scatter(dates, nighttime['waketime_hour'], s=100, alpha=0.7,
-              color='#F18F01', marker='s', label='Wake Time', edgecolors='white', linewidth=1.5)
+    # X-axis formatting (only bottom plot)
+    axes[-1].set_xlabel('Date', fontsize=12, fontweight='bold')
+    axes[-1].xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
+    axes[-1].xaxis.set_major_locator(mdates.DayLocator(interval=1))
+    plt.setp(axes[-1].xaxis.get_majorticklabels(), rotation=45, ha='right')
     
-    # Add mean lines
-    mean_bedtime = nighttime['bedtime_hour'].mean()
-    mean_waketime = nighttime['waketime_hour'].mean()
-    
-    ax.axhline(y=mean_bedtime, color='#2E86AB', linestyle='--', alpha=0.5,
-              linewidth=2, label=f'Mean Bedtime ({mean_bedtime:.1f}h)')
-    ax.axhline(y=mean_waketime, color='#F18F01', linestyle='--', alpha=0.5,
-              linewidth=2, label=f'Mean Wake Time ({mean_waketime:.1f}h)')
-    
-    # Formatting
-    ax.set_xlabel('Date', fontsize=12, fontweight='bold')
-    ax.set_ylabel('Time (24-hour)', fontsize=12, fontweight='bold')
-    ax.set_title(f'Sleep Timing Consistency - {subject_id}', fontsize=14, fontweight='bold', pad=20)
-    
-    # Y-axis: times
-    y_ticks = [0, 3, 6, 9, 12, 15, 18, 21, 24]
-    y_labels = ['12 AM', '3 AM', '6 AM', '9 AM', '12 PM', '3 PM', '6 PM', '9 PM', '12 AM']
-    ax.set_yticks(y_ticks)
-    ax.set_yticklabels(y_labels)
-    ax.set_ylim(0, 24)
-    
-    # X-axis
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
-    ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
-    plt.xticks(rotation=45, ha='right')
-    
-    ax.legend(loc='best', fontsize=10)
-    ax.grid(True, alpha=0.3)
+    fig.suptitle(f'Sleep Timing by Time of Day - {subject_id}', 
+                fontsize=14, fontweight='bold', y=0.995)
     
     plt.tight_layout()
     
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
     
-    return fig, ax
+    return fig, axes
 
 
 def create_comprehensive_dashboard(sleep_df, daily_summary, subject_id, save_path=None):
