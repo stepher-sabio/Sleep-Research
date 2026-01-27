@@ -118,14 +118,41 @@ def timing_analysis(sleep_df):
 def process_single_subject(file_path):
     """
     Process a single subject file and return all statistics.
+    Includes time-of-day analysis (Morning, Afternoon, Evening).
+    
+    Parameters:
+    -----------
+    file_path : str
+        Path to the CSV file
+    
+    Returns:
+    --------
+    dict : Dictionary with all statistics for this subject
     """
     from pathlib import Path
     
+    # Extract subject ID from filename
     subject_id = Path(file_path).stem
     
     # Load data
     df = pd.read_csv(file_path)
+    
+    # Filter to SLEEP only
     sleep_df = df[df['interval_type'] == 'SLEEP'].copy()
+    
+    # Check if we have data
+    if len(sleep_df) == 0:
+        return None
+    
+    # Convert numeric columns
+    numeric_columns = ['sleep_time', 'duration', 'efficiency', 'onset_latency', 
+                      'fragmentation', 'wake_time']
+    for col in numeric_columns:
+        if col in sleep_df.columns:
+            sleep_df[col] = pd.to_numeric(sleep_df[col], errors='coerce')
+    
+    # Drop rows with missing data
+    sleep_df = sleep_df.dropna(subset=['sleep_time', 'start_date', 'start_time'])
     
     if len(sleep_df) == 0:
         return None
@@ -145,32 +172,20 @@ def process_single_subject(file_path):
     
     daily_summary.rename(columns={'interval_number': 'num_sleep_intervals'}, inplace=True)
     
-    # Get statistics
+    # Get overall statistics
     stats = statistics(daily_summary)
-    timing_stats = timing_analysis(sleep_df)
+    
+    # ⭐ Get time-of-day statistics (Morning, Afternoon, Evening)
+    timing_stats = timing_category_analysis(sleep_df)
     
     # Combine into one row
     result = {
         'subject_id': subject_id,
-        **stats
+        **stats,
+        **timing_stats  # Add timing category stats
     }
     
-    # Add timing stats for nighttime sleep (if exists)
-    if 'Nighttime Sleep' in timing_stats:
-        night = timing_stats['Nighttime Sleep']
-        result['nighttime_count'] = night['count']
-        
-        # ⭐ CONVERT TO CLOCK TIME
-        result['nighttime_bedtime_mean'] = format_time(night['start_time_mean'])
-        result['nighttime_bedtime_std_minutes'] = round(night['start_time_std'] * 60, 1)
-        
-        result['nighttime_waketime_mean'] = format_time(night['end_time_mean'])
-        result['nighttime_waketime_std_minutes'] = round(night['end_time_std'] * 60, 1)
-        
-        result['nighttime_duration_mean'] = night['duration_mean']
-    
     return result
-
 
 def format_time(hour_decimal):
     """Convert decimal hour to readable time format."""
@@ -205,3 +220,76 @@ def interpret_consistency(std_minutes):
         return "Variable"
     else:
         return "Highly Variable"
+    
+def timing_category_analysis(sleep_df):
+    """
+    Analyze sleep by time of day categories: Morning, Afternoon, Evening.
+    
+    Categories:
+    - Morning: 10 AM - 11:59 AM
+    - Afternoon: 12 PM - 5:59 PM
+    - Evening: 6 PM - 9:59 AM (all other times)
+    
+    Parameters:
+    -----------
+    sleep_df : pandas.DataFrame
+        DataFrame with individual sleep intervals
+    
+    Returns:
+    --------
+    dict : Statistics for each time category
+    """
+    
+    # Prepare bedtime and waketime
+    if 'bedtime' not in sleep_df.columns:
+        sleep_df = sleep_df.copy()
+        sleep_df['bedtime'] = pd.to_datetime(
+            sleep_df['start_date'] + ' ' + sleep_df['start_time']
+        )
+        sleep_df['waketime'] = pd.to_datetime(
+            sleep_df['end_date'] + ' ' + sleep_df['end_time']
+        )
+    
+    # Extract start hour
+    sleep_df['start_hour'] = sleep_df['bedtime'].dt.hour + sleep_df['bedtime'].dt.minute / 60
+    
+    # Categorize by start time
+    def categorize_by_time(start_hour):
+        if 10 <= start_hour < 12:
+            return "morning"
+        elif 12 <= start_hour < 18:
+            return "afternoon"
+        else:
+            return "evening"
+    
+    sleep_df['time_category'] = sleep_df['start_hour'].apply(categorize_by_time)
+    
+    # Calculate bedtime and waketime as decimal hours
+    sleep_df['bedtime_hour'] = sleep_df['bedtime'].dt.hour + sleep_df['bedtime'].dt.minute / 60
+    sleep_df['waketime_hour'] = sleep_df['waketime'].dt.hour + sleep_df['waketime'].dt.minute / 60
+    
+    results = {}
+    
+    # Analyze each category
+    for category in ['morning', 'afternoon', 'evening']:
+        cat_data = sleep_df[sleep_df['time_category'] == category]
+        
+        if len(cat_data) > 0:
+            results[f'{category}_count'] = len(cat_data)
+            results[f'{category}_bedtime_mean'] = cat_data['bedtime_hour'].mean()
+            results[f'{category}_bedtime_std'] = cat_data['bedtime_hour'].std() if len(cat_data) > 1 else 0
+            results[f'{category}_waketime_mean'] = cat_data['waketime_hour'].mean()
+            results[f'{category}_waketime_std'] = cat_data['waketime_hour'].std() if len(cat_data) > 1 else 0
+            results[f'{category}_duration_mean'] = cat_data['sleep_time'].mean()
+            results[f'{category}_duration_std'] = cat_data['sleep_time'].std() if len(cat_data) > 1 else 0
+        else:
+            # No data for this category
+            results[f'{category}_count'] = 0
+            results[f'{category}_bedtime_mean'] = None
+            results[f'{category}_bedtime_std'] = None
+            results[f'{category}_waketime_mean'] = None
+            results[f'{category}_waketime_std'] = None
+            results[f'{category}_duration_mean'] = None
+            results[f'{category}_duration_std'] = None
+    
+    return results

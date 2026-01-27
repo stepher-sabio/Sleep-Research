@@ -502,7 +502,12 @@ def plot_sleep_quality(daily_summary, subject_id, save_path=None):
 def plot_timing_consistency(sleep_df, subject_id, save_path=None):
     """
     Create plot showing sleep timing categorized by time of day.
-    Separate panels for each category.
+    Shows start and end times with means for each category.
+    
+    Categories:
+    - Morning: 10 AM - 11:59 AM
+    - Afternoon: 12 PM - 5:59 PM
+    - Evening: 6 PM - 9:59 AM (everything else)
     
     Parameters:
     -----------
@@ -515,7 +520,7 @@ def plot_timing_consistency(sleep_df, subject_id, save_path=None):
     
     Returns:
     --------
-    fig, axes : matplotlib figure and axis objects
+    fig, ax : matplotlib figure and axis objects
     """
     
     # Prepare data
@@ -532,99 +537,120 @@ def plot_timing_consistency(sleep_df, subject_id, save_path=None):
     sleep_df['start_hour'] = sleep_df['bedtime'].dt.hour + sleep_df['bedtime'].dt.minute / 60
     sleep_df['end_hour'] = sleep_df['waketime'].dt.hour + sleep_df['waketime'].dt.minute / 60
     
-    # Categorize by START time
+    # ⭐ Categorize by START time - 3 categories only
     def categorize_by_time(start_hour):
+        """Categorize sleep period by start time."""
         if 10 <= start_hour < 12:
             return "Morning"
         elif 12 <= start_hour < 18:
             return "Afternoon"
-        elif 18 <= start_hour < 22:
-            return "Evening"
         else:
-            return "Night/Other"
+            # Everything else is Evening (6 PM - 9:59 AM)
+            return "Evening"
     
     sleep_df['time_category'] = sleep_df['start_hour'].apply(categorize_by_time)
     
-    # Count categories present
-    categories_present = sleep_df['time_category'].unique()
-    n_categories = len(categories_present)
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 6))
     
-    if n_categories == 0:
-        print(f"No sleep data for {subject_id}")
-        return None, None
-    
-    # Create subplots - one per category
-    fig, axes = plt.subplots(n_categories, 1, figsize=(12, 3 * n_categories), 
-                            sharex=True, squeeze=False)
-    axes = axes.flatten()
-    
-    # Color map
+    # ⭐ Color map - 3 categories only
     colors = {
-        'Morning': '#A23B72',
-        'Afternoon': '#F18F01',
-        'Evening': '#2E86AB',
-        'Night/Other': '#808080'
+        'Morning': '#A23B72',      # Purple
+        'Afternoon': '#F18F01',    # Orange
+        'Evening': '#2E86AB'       # Blue
     }
     
+    markers = {
+        'Morning': 'o',
+        'Afternoon': 's',
+        'Evening': '^'
+    }
+    
+    dates = pd.to_datetime(sleep_df['start_date'])
+    
     # Plot each category
-    for idx, category in enumerate(sorted(categories_present)):
-        ax = axes[idx]
+    for category in ['Morning', 'Afternoon', 'Evening']:
         cat_data = sleep_df[sleep_df['time_category'] == category]
         
         if len(cat_data) == 0:
             continue
         
         cat_dates = pd.to_datetime(cat_data['start_date'])
-        color = colors.get(category, '#808080')
         
-        # Plot start and end times
+        # Plot start times (filled markers)
         ax.scatter(cat_dates, cat_data['start_hour'], 
-                  s=100, alpha=0.7, color=color, marker='o',
-                  label='Start Time', edgecolors='white', linewidth=1.5)
+                  s=100, alpha=0.7,
+                  color=colors[category], 
+                  marker=markers[category],
+                  label=f'{category} (start)',
+                  edgecolors='white', 
+                  linewidth=1.5)
         
+        # Plot end times (hollow markers)
         ax.scatter(cat_dates, cat_data['end_hour'], 
-                  s=100, alpha=0.7, color=color, marker='s',
-                  label='End Time', edgecolors='white', linewidth=1.5)
+                  s=100, alpha=0.7,
+                  color=colors[category], 
+                  marker=markers[category],
+                  facecolors='none',
+                  edgecolors=colors[category],
+                  linewidth=2,
+                  label=f'{category} (end)')
         
-        # Mean lines
+        # ⭐ Calculate and plot mean lines (dashed)
         mean_start = cat_data['start_hour'].mean()
         mean_end = cat_data['end_hour'].mean()
         
-        ax.axhline(y=mean_start, color=color, linestyle='--', alpha=0.6,
-                  linewidth=2, label=f'Mean Start: {format_time(mean_start)}')
-        ax.axhline(y=mean_end, color=color, linestyle=':', alpha=0.6,
-                  linewidth=2, label=f'Mean End: {format_time(mean_end)}')
+        # Plot mean start time line
+        ax.axhline(y=mean_start, 
+                  color=colors[category], 
+                  linestyle='--', 
+                  alpha=0.5,
+                  linewidth=2,
+                  label=f'{category} mean start ({format_time(mean_start)})')
         
-        # Formatting
-        ax.set_ylabel('Time', fontsize=11, fontweight='bold')
-        ax.set_title(f'{category} Sleep (n={len(cat_data)})', 
-                    fontsize=12, fontweight='bold', color=color)
-        
-        # Y-axis
-        y_ticks = [0, 6, 12, 18, 24]
-        y_labels = ['12 AM', '6 AM', '12 PM', '6 PM', '12 AM']
-        ax.set_yticks(y_ticks)
-        ax.set_yticklabels(y_labels)
-        ax.set_ylim(0, 24)
-        
-        ax.legend(loc='upper right', fontsize=9)
-        ax.grid(True, alpha=0.3)
+        # Plot mean end time line
+        ax.axhline(y=mean_end, 
+                  color=colors[category], 
+                  linestyle=':', 
+                  alpha=0.5,
+                  linewidth=2,
+                  label=f'{category} mean end ({format_time(mean_end)})')
     
-    # X-axis formatting (only bottom plot)
-    axes[-1].set_xlabel('Date', fontsize=12, fontweight='bold')
-    axes[-1].xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
-    axes[-1].xaxis.set_major_locator(mdates.DayLocator(interval=1))
-    plt.setp(axes[-1].xaxis.get_majorticklabels(), rotation=45, ha='right')
+    # Formatting
+    ax.set_xlabel('Date', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Time (24-hour)', fontsize=12, fontweight='bold')
+    ax.set_title(f'Sleep Timing by Time of Day - {subject_id}', 
+                fontsize=14, fontweight='bold', pad=20)
     
-    fig.suptitle(f'Sleep Timing by Time of Day - {subject_id}', 
-                fontsize=14, fontweight='bold', y=0.995)
+    # Y-axis: times
+    y_ticks = [0, 3, 6, 9, 12, 15, 18, 21, 24]
+    y_labels = ['12 AM', '3 AM', '6 AM', '9 AM', '12 PM', '3 PM', '6 PM', '9 PM', '12 AM']
+    ax.set_yticks(y_ticks)
+    ax.set_yticklabels(y_labels)
+    ax.set_ylim(0, 24)
+    
+    # Add shaded regions for categories
+    ax.axhspan(10, 12, alpha=0.05, color=colors['Morning'], zorder=0)
+    ax.axhspan(12, 18, alpha=0.05, color=colors['Afternoon'], zorder=0)
+    # Evening spans two regions (6 PM - midnight and midnight - 10 AM)
+    ax.axhspan(18, 24, alpha=0.05, color=colors['Evening'], zorder=0)
+    ax.axhspan(0, 10, alpha=0.05, color=colors['Evening'], zorder=0)
+    
+    # X-axis
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d'))
+    ax.xaxis.set_major_locator(mdates.DayLocator(interval=1))
+    plt.xticks(rotation=45, ha='right')
+    
+    # Legend (place outside to avoid clutter)
+    ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=9)
+    ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
     
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
     
-    return fig, axes
+    return fig, ax
 
 
 def create_comprehensive_dashboard(sleep_df, daily_summary, subject_id, save_path=None):
