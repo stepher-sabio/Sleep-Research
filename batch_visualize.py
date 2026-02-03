@@ -15,7 +15,7 @@ from visualize_sleep import (
 
 # Configuration
 input_folder = '/Users/stepher/Desktop/Actigraphy2/data_csv'
-output_folder = '/Users/stepher/Desktop/Actigraphy2/visualizations'
+output_folder = '/Users/stepher/Desktop/Actigraphy2/visualizations/individuals'
 
 # Create output folder
 os.makedirs(output_folder, exist_ok=True)
