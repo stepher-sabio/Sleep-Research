@@ -504,10 +504,10 @@ def plot_timing_consistency(sleep_df, subject_id, save_path=None):
     Create plot showing sleep timing categorized by time of day.
     Shows start and end times with means for each category.
     
-    Categories:
-    - Morning: 10 AM - 11:59 AM
-    - Afternoon: 12 PM - 5:59 PM
-    - Evening: 6 PM - 9:59 AM (everything else)
+    VISUALIZATION Categories (for plotting only):
+    - Morning: 10:00 AM - 11:19 AM
+    - Midday: 11:20 AM - 5:59 PM
+    - Evening: 6:00 PM - 9:59 AM (everything else)
     
     Parameters:
     -----------
@@ -537,15 +537,15 @@ def plot_timing_consistency(sleep_df, subject_id, save_path=None):
     sleep_df['start_hour'] = sleep_df['bedtime'].dt.hour + sleep_df['bedtime'].dt.minute / 60
     sleep_df['end_hour'] = sleep_df['waketime'].dt.hour + sleep_df['waketime'].dt.minute / 60
     
-    # ⭐ Categorize by START time - 3 categories only
+    # ⭐ Categorize by START time - VISUAL categories (different from analysis)
     def categorize_by_time(start_hour):
-        """Categorize sleep period by start time."""
-        if 10 <= start_hour < 12:
+        """Categorize sleep period by start time for visualization."""
+        # 11:20 AM = 11 + 20/60 = 11.333...
+        if 10 <= start_hour < 11.333:  # 10:00 AM - 11:19 AM
             return "Morning"
-        elif 12 <= start_hour < 18:
-            return "Afternoon"
-        else:
-            # Everything else is Evening (6 PM - 9:59 AM)
+        elif 11.333 <= start_hour < 18:  # 11:20 AM - 5:59 PM
+            return "Midday"
+        else:  # 6:00 PM - 9:59 AM (everything else)
             return "Evening"
     
     sleep_df['time_category'] = sleep_df['start_hour'].apply(categorize_by_time)
@@ -553,23 +553,23 @@ def plot_timing_consistency(sleep_df, subject_id, save_path=None):
     # Create figure
     fig, ax = plt.subplots(figsize=(12, 6))
     
-    # ⭐ Color map - 3 categories only
+    # ⭐ Color map - 3 categories
     colors = {
         'Morning': '#A23B72',      # Purple
-        'Afternoon': '#F18F01',    # Orange
+        'Midday': '#F18F01',       # Orange (was "Afternoon")
         'Evening': '#2E86AB'       # Blue
     }
     
     markers = {
         'Morning': 'o',
-        'Afternoon': 's',
+        'Midday': 's',
         'Evening': '^'
     }
     
     dates = pd.to_datetime(sleep_df['start_date'])
     
     # Plot each category
-    for category in ['Morning', 'Afternoon', 'Evening']:
+    for category in ['Morning', 'Midday', 'Evening']:
         cat_data = sleep_df[sleep_df['time_category'] == category]
         
         if len(cat_data) == 0:
@@ -596,7 +596,7 @@ def plot_timing_consistency(sleep_df, subject_id, save_path=None):
                   linewidth=2,
                   label=f'{category} (end)')
         
-        # ⭐ Calculate and plot mean lines (dashed)
+        # Calculate and plot mean lines (dashed)
         mean_start = cat_data['start_hour'].mean()
         mean_end = cat_data['end_hour'].mean()
         
@@ -629,10 +629,12 @@ def plot_timing_consistency(sleep_df, subject_id, save_path=None):
     ax.set_yticklabels(y_labels)
     ax.set_ylim(0, 24)
     
-    # Add shaded regions for categories
-    ax.axhspan(10, 12, alpha=0.05, color=colors['Morning'], zorder=0)
-    ax.axhspan(12, 18, alpha=0.05, color=colors['Afternoon'], zorder=0)
-    # Evening spans two regions (6 PM - midnight and midnight - 10 AM)
+    # ⭐ Add shaded regions for NEW categories
+    # Morning: 10:00 AM - 11:19 AM (10.0 - 11.333)
+    ax.axhspan(10, 11.333, alpha=0.05, color=colors['Morning'], zorder=0)
+    # Midday: 11:20 AM - 5:59 PM (11.333 - 18.0)
+    ax.axhspan(11.333, 18, alpha=0.05, color=colors['Midday'], zorder=0)
+    # Evening: 6 PM - midnight and midnight - 10 AM
     ax.axhspan(18, 24, alpha=0.05, color=colors['Evening'], zorder=0)
     ax.axhspan(0, 10, alpha=0.05, color=colors['Evening'], zorder=0)
     
@@ -651,7 +653,6 @@ def plot_timing_consistency(sleep_df, subject_id, save_path=None):
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
     
     return fig, ax
-
 
 def create_comprehensive_dashboard(sleep_df, daily_summary, subject_id, save_path=None):
     """
