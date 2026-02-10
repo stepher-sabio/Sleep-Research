@@ -27,7 +27,7 @@ plt.rcParams['font.size'] = 10
 
 # Configuration
 input_folder = '/Users/stepher/Desktop/Actigraphy2/data_csv'
-output_folder = '/Users/stepher/Desktop/Actigraphy2/visualizations/age_groups'
+output_folder = '/Users/stepher/Desktop/Actigraphy2/visualizations/age_groups/More Analysis'
 
 # Create output folder
 os.makedirs(output_folder, exist_ok=True)

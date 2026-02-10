@@ -1,6 +1,7 @@
 """
 sleep_utils.py
 Shared functions for sleep analysis
+VERSION 2: Fixed sleep period classification to prevent long nighttime sleeps from being misclassified
 """
 
 import pandas as pd
@@ -225,10 +226,18 @@ def timing_category_analysis(sleep_df):
     """
     Analyze sleep by time of day categories: Morning, Afternoon, Evening.
     
+    *** FIXED VERSION ***
+    Now considers BOTH start time AND duration to prevent misclassification
+    of long nighttime sleeps as afternoon naps.
+    
     Categories:
-    - Morning: 10 AM - 11:59 AM
-    - Afternoon: 12 PM - 5:59 PM
-    - Evening: 6 PM - 9:59 AM (all other times)
+    - Morning: 10 AM - 11:59 AM (and duration < 5 hours)
+    - Afternoon: 12 PM - 5:59 PM (and duration < 5 hours)
+    - Evening: 6 PM - 9:59 AM OR any sleep >= 5 hours
+    
+    Logic:
+    1. If duration >= 5 hours (300 min) → Always classify as "evening" (main sleep)
+    2. Otherwise, classify by start time
     
     Parameters:
     -----------
@@ -253,8 +262,21 @@ def timing_category_analysis(sleep_df):
     # Extract start hour
     sleep_df['start_hour'] = sleep_df['bedtime'].dt.hour + sleep_df['bedtime'].dt.minute / 60
     
-    # Categorize by start time
-    def categorize_by_time(start_hour):
+    # *** FIXED CLASSIFICATION LOGIC ***
+    def categorize_by_time(row):
+        """
+        Improved classification that considers BOTH start time AND duration.
+        Prevents long nighttime sleeps from being misclassified as naps.
+        """
+        start_hour = row['start_hour']
+        duration_min = row['sleep_time']
+        
+        # Rule 1: Long sleep periods (>= 5 hours) are ALWAYS evening/nighttime sleep
+        # This prevents 12-hour sleeps from being classified as "afternoon naps"
+        if duration_min >= 300:  # 5 hours
+            return "evening"
+        
+        # Rule 2: For shorter periods, use start time
         if 10 <= start_hour < 12:
             return "morning"
         elif 12 <= start_hour < 18:
@@ -262,7 +284,7 @@ def timing_category_analysis(sleep_df):
         else:
             return "evening"
     
-    sleep_df['time_category'] = sleep_df['start_hour'].apply(categorize_by_time)
+    sleep_df['time_category'] = sleep_df.apply(categorize_by_time, axis=1)
     
     # Calculate bedtime and waketime as decimal hours
     sleep_df['bedtime_hour'] = sleep_df['bedtime'].dt.hour + sleep_df['bedtime'].dt.minute / 60
