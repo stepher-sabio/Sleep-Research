@@ -8,15 +8,25 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 import os
+from datetime import datetime, timedelta
 
 # Set style
 sns.set_style("whitegrid")
 plt.rcParams['figure.dpi'] = 100
 plt.rcParams['font.size'] = 10
 
-# Configuration
+# Configuration - UPDATE THESE PATHS TO MATCH YOUR SYSTEM
 input_csv = '/Users/stepher/Desktop/Actigraphy2/results/longitudinal_subjects.csv'
 output_folder = '/Users/stepher/Desktop/Actigraphy2/visualizations/longitudinal'
+
+# Check if input file exists
+if not os.path.exists(input_csv):
+    print(f"\n⚠️  Data file not found: {input_csv}")
+    print("\nPlease update the 'input_csv' path in the script (around line 18)")
+    exit()
+
+print(f"Using data file: {input_csv}")
+print(f"Output folder: {output_folder}")
 
 # Create output folder
 os.makedirs(output_folder, exist_ok=True)
@@ -24,20 +34,76 @@ os.makedirs(output_folder, exist_ok=True)
 print("="*70)
 print("LONGITUDINAL TRAJECTORY ANALYSIS")
 print("="*70)
-
-# Check if longitudinal data exists
-if not os.path.exists(input_csv):
-    print("\n⚠ No longitudinal data file found!")
-    print("Run 'detect_longitudinal.py' first to check for longitudinal subjects.")
-    print("\nIf you have no longitudinal data, this analysis cannot be performed.")
-    exit()
+print(f"Input file: {input_csv}")
+print(f"Output folder: {output_folder}")
+print("="*70)
 
 # Load data
 df = pd.read_csv(input_csv)
 
 print(f"Loaded {len(df)} observations")
+
+# Check if this is the all_subjects file (no base_subject_id) or longitudinal file
+if 'base_subject_id' not in df.columns and 'subject_id' in df.columns:
+    print("\nDetected all_subjects_summary.csv format")
+    print("Extracting base subject IDs and filtering for longitudinal subjects...")
+    
+    # Extract base subject ID and age from subject_id (e.g., "TOSS_105_16mos" -> "TOSS_105", 16)
+    df['base_subject_id'] = df['subject_id'].str.extract(r'([A-Z]+_\d+)_')[0]
+    df['age_months'] = df['subject_id'].str.extract(r'_(\d+)mos')[0].astype(int)
+    
+    # Filter for only subjects with multiple timepoints
+    subject_counts = df['base_subject_id'].value_counts()
+    longitudinal_subject_ids = subject_counts[subject_counts > 1].index.tolist()
+    
+    print(f"Found {len(longitudinal_subject_ids)} subjects with multiple timepoints:")
+    for subj_id in sorted(longitudinal_subject_ids):
+        count = subject_counts[subj_id]
+        ages = sorted(df[df['base_subject_id'] == subj_id]['age_months'].tolist())
+        print(f"  {subj_id}: {count} timepoints (ages: {ages})")
+    
+    # Filter to only longitudinal subjects
+    df = df[df['base_subject_id'].isin(longitudinal_subject_ids)].copy()
+    print(f"\nFiltered to {len(df)} observations from longitudinal subjects")
+
 print(f"Unique subjects: {df['base_subject_id'].nunique()}")
 print()
+
+# ============================================================================
+# Convert time string columns to minutes from midnight
+# ============================================================================
+
+def parse_time_string_to_minutes(time_str):
+    """
+    Convert time string like '7:44 PM' or '10:31 AM' to minutes from midnight.
+    Returns float representing minutes from midnight (0-1440).
+    """
+    if pd.isna(time_str) or time_str == '' or time_str == 'nan':
+        return np.nan
+    
+    try:
+        # Parse the time string
+        time_obj = pd.to_datetime(time_str, format='%I:%M %p').time()
+        # Convert to minutes from midnight
+        minutes = time_obj.hour * 60 + time_obj.minute
+        return float(minutes)
+    except:
+        return np.nan
+
+# Convert all timing columns from string format to minutes
+timing_columns = [
+    'morning_bedtime_mean', 'morning_waketime_mean',
+    'afternoon_bedtime_mean', 'afternoon_waketime_mean',
+    'evening_bedtime_mean', 'evening_waketime_mean'
+]
+
+for col in timing_columns:
+    if col in df.columns:
+        # Check if the column is string type (not already numeric)
+        # Use dtype.kind to handle both 'object' and 'string' dtypes
+        if df[col].dtype.kind in ['O', 'U']:
+            print(f"Converting {col} from time strings to minutes...")
+            df[col] = df[col].apply(parse_time_string_to_minutes)
 
 # Get list of longitudinal subjects
 longitudinal_subjects = df['base_subject_id'].unique()
@@ -141,10 +207,262 @@ print(f"  ✓ Saved: figure1_individual_trajectories.png")
 plt.close()
 
 # ============================================================================
-# FIGURE 2: Within-Subject vs Between-Subject Variability
+# FIGURE 2: Individual Sleep Timing Trajectories (NEW)
 # ============================================================================
 
-print("Creating Figure 2: Within vs Between Subject Variability...")
+print("Creating Figure 2: Individual Sleep Timing Trajectories...")
+
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+def convert_minutes_to_clock_time(minutes):
+    """Convert minutes from midnight to clock time (hours as decimal)"""
+    # Handle values that represent times after midnight the next day
+    minutes = minutes % 1440  # Wrap to 24-hour format
+    hours = minutes / 60
+    return hours
+
+# Panel A: Bedtime (Evening Sleep Onset)
+ax = axes[0, 0]
+
+# Check if timing columns exist, use appropriate column names from the actual dataset
+timing_cols = {
+    'bedtime': ['evening_bedtime_mean', 'evening_onset_mean', 'bedtime_mean', 'sleep_onset_mean'],
+    'waketime': ['evening_waketime_mean', 'evening_offset_mean', 'waketime_mean', 'sleep_offset_mean'],
+    'morning_bedtime': ['morning_bedtime_mean'],
+    'morning_waketime': ['morning_waketime_mean'],
+    'afternoon_bedtime': ['afternoon_bedtime_mean'],
+    'afternoon_waketime': ['afternoon_waketime_mean']
+}
+
+# Find which columns are available
+available_cols = {}
+for key, possible_cols in timing_cols.items():
+    for col in possible_cols:
+        if col in df.columns:
+            available_cols[key] = col
+            break
+
+# Calculate sleep midpoint if we have bedtime and waketime
+if 'bedtime' in available_cols and 'waketime' in available_cols:
+    bedtime_col = available_cols['bedtime']
+    waketime_col = available_cols['waketime']
+    
+    # Debug: Check if columns are numeric
+    print(f"  Bedtime column ({bedtime_col}) dtype: {df[bedtime_col].dtype}")
+    print(f"  Waketime column ({waketime_col}) dtype: {df[waketime_col].dtype}")
+    
+    # Make sure columns are numeric
+    if df[bedtime_col].dtype.kind in ['O', 'U']:
+        print(f"  Converting {bedtime_col} to numeric...")
+        df[bedtime_col] = df[bedtime_col].apply(parse_time_string_to_minutes)
+    if df[waketime_col].dtype.kind in ['O', 'U']:
+        print(f"  Converting {waketime_col} to numeric...")
+        df[waketime_col] = df[waketime_col].apply(parse_time_string_to_minutes)
+    
+    def calculate_midpoint(bedtime, waketime):
+        """Calculate sleep midpoint handling day wraparound"""
+        if pd.isna(bedtime) or pd.isna(waketime):
+            return np.nan
+        # If waketime is less than bedtime, add 24 hours (1440 minutes)
+        if waketime < bedtime:
+            waketime = waketime + 1440
+        midpoint = (bedtime + waketime) / 2
+        # Wrap back to 0-1440 range
+        return midpoint % 1440
+    
+    df['calculated_midpoint'] = df.apply(
+        lambda row: calculate_midpoint(row[bedtime_col], row[waketime_col]),
+        axis=1
+    )
+    available_cols['midpoint'] = 'calculated_midpoint'
+
+# Panel A: Bedtime
+if 'bedtime' in available_cols:
+    bedtime_col = available_cols['bedtime']
+    
+    # Calculate population mean
+    pop_data = df.groupby('age_months')[bedtime_col].mean()
+    pop_data_hours = pop_data.apply(convert_minutes_to_clock_time)
+    ax.plot(pop_data.index.tolist(), pop_data_hours, 'k--', linewidth=3, alpha=0.3,
+           label='Population Mean', zorder=1)
+    
+    # Plot individual trajectories
+    for i, subject in enumerate(longitudinal_subjects):
+        subj_data = df[df['base_subject_id'] == subject].sort_values('age_months')
+        bedtimes_hours = subj_data[bedtime_col].apply(convert_minutes_to_clock_time)
+        ax.plot(subj_data['age_months'], bedtimes_hours,
+               marker='o', markersize=8, linewidth=2, alpha=0.7,
+               color=colors[i], label=subject, zorder=2)
+    
+    ax.set_xlabel('Age (months)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Bedtime (hour of day)', fontsize=12, fontweight='bold')
+    ax.set_title('Bedtime Trajectories', fontsize=13, fontweight='bold')
+    ax.legend(fontsize=8, loc='best')
+    ax.grid(True, alpha=0.3)
+    
+    # Format y-axis to show clock times
+    ax.set_ylim(17, 24)  # 5 PM to midnight typically
+    yticks = np.arange(18, 24, 1)
+    ax.set_yticks(yticks)
+    ax.set_yticklabels([f"{int(h)}:00" for h in yticks])
+else:
+    ax.text(0.5, 0.5, 'Bedtime data not available', 
+           transform=ax.transAxes, ha='center', va='center', fontsize=12)
+    ax.set_xlabel('Age (months)', fontsize=12, fontweight='bold')
+    ax.set_title('Bedtime Trajectories', fontsize=13, fontweight='bold')
+
+# Panel B: Wake Time
+ax = axes[0, 1]
+
+if 'waketime' in available_cols:
+    waketime_col = available_cols['waketime']
+    
+    # Calculate population mean
+    pop_data = df.groupby('age_months')[waketime_col].mean()
+    pop_data_hours = pop_data.apply(convert_minutes_to_clock_time)
+    ax.plot(pop_data.index.tolist(), pop_data_hours, 'k--', linewidth=3, alpha=0.3,
+           label='Population Mean', zorder=1)
+    
+    # Plot individual trajectories
+    for i, subject in enumerate(longitudinal_subjects):
+        subj_data = df[df['base_subject_id'] == subject].sort_values('age_months')
+        waketimes_hours = subj_data[waketime_col].apply(convert_minutes_to_clock_time)
+        ax.plot(subj_data['age_months'], waketimes_hours,
+               marker='o', markersize=8, linewidth=2, alpha=0.7,
+               color=colors[i], label=subject, zorder=2)
+    
+    ax.set_xlabel('Age (months)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Wake Time (hour of day)', fontsize=12, fontweight='bold')
+    ax.set_title('Morning Wake Time Trajectories', fontsize=13, fontweight='bold')
+    ax.legend(fontsize=8, loc='best')
+    ax.grid(True, alpha=0.3)
+    
+    # Format y-axis to show clock times
+    ax.set_ylim(5, 10)  # 5 AM to 10 AM typically
+    yticks = np.arange(5, 11, 1)
+    ax.set_yticks(yticks)
+    ax.set_yticklabels([f"{int(h)}:00" for h in yticks])
+else:
+    ax.text(0.5, 0.5, 'Wake time data not available', 
+           transform=ax.transAxes, ha='center', va='center', fontsize=12)
+    ax.set_xlabel('Age (months)', fontsize=12, fontweight='bold')
+    ax.set_title('Morning Wake Time Trajectories', fontsize=13, fontweight='bold')
+
+# Panel C: Sleep Midpoint
+ax = axes[1, 0]
+
+if 'midpoint' in available_cols:
+    midpoint_col = available_cols['midpoint']
+    
+    # Calculate population mean
+    pop_data = df.groupby('age_months')[midpoint_col].mean()
+    pop_data_hours = pop_data.apply(convert_minutes_to_clock_time)
+    ax.plot(pop_data.index.tolist(), pop_data_hours, 'k--', linewidth=3, alpha=0.3,
+           label='Population Mean', zorder=1)
+    
+    # Plot individual trajectories
+    for i, subject in enumerate(longitudinal_subjects):
+        subj_data = df[df['base_subject_id'] == subject].sort_values('age_months')
+        midpoints_hours = subj_data[midpoint_col].apply(convert_minutes_to_clock_time)
+        ax.plot(subj_data['age_months'], midpoints_hours,
+               marker='o', markersize=8, linewidth=2, alpha=0.7,
+               color=colors[i], label=subject, zorder=2)
+    
+    ax.set_xlabel('Age (months)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Sleep Midpoint (hour)', fontsize=12, fontweight='bold')
+    ax.set_title('Sleep Midpoint Trajectories', fontsize=13, fontweight='bold')
+    ax.legend(fontsize=8, loc='best')
+    ax.grid(True, alpha=0.3)
+    
+    # Format y-axis to show clock times (typically midnight to 4 AM)
+    yticks = [0, 1, 2, 3, 4]
+    ax.set_yticks(yticks)
+    ax.set_yticklabels(['00:00', '01:00', '02:00', '03:00', '04:00'])
+else:
+    ax.text(0.5, 0.5, 'Sleep midpoint data not available', 
+           transform=ax.transAxes, ha='center', va='center', fontsize=12)
+    ax.set_xlabel('Age (months)', fontsize=12, fontweight='bold')
+    ax.set_title('Sleep Midpoint Trajectories', fontsize=13, fontweight='bold')
+
+# Panel D: Time in Bed (Sleep Opportunity Window) OR Morning Nap Start Time
+ax = axes[1, 1]
+
+# Calculate time in bed if both bedtime and waketime are available
+if 'bedtime' in available_cols and 'waketime' in available_cols:
+    bedtime_col = available_cols['bedtime']
+    waketime_col = available_cols['waketime']
+    
+    # Calculate time in bed for each row
+    df['time_in_bed_hours'] = df.apply(
+        lambda row: ((row[waketime_col] - row[bedtime_col] + 1440) % 1440) / 60 
+        if pd.notna(row[bedtime_col]) and pd.notna(row[waketime_col]) else np.nan,
+        axis=1
+    )
+    
+    # Calculate population mean
+    pop_data = df.groupby('age_months')['time_in_bed_hours'].mean()
+    ax.plot(pop_data.index.tolist(), pop_data, 'k--', linewidth=3, alpha=0.3,
+           label='Population Mean', zorder=1)
+    
+    # Plot individual trajectories
+    for i, subject in enumerate(longitudinal_subjects):
+        subj_data = df[df['base_subject_id'] == subject].sort_values('age_months')
+        ax.plot(subj_data['age_months'], subj_data['time_in_bed_hours'],
+               marker='o', markersize=8, linewidth=2, alpha=0.7,
+               color=colors[i], label=subject, zorder=2)
+    
+    ax.set_xlabel('Age (months)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Time in Bed (hours)', fontsize=12, fontweight='bold')
+    ax.set_title('Sleep Opportunity Window', fontsize=13, fontweight='bold')
+    ax.legend(fontsize=8, loc='best')
+    ax.grid(True, alpha=0.3)
+
+# Alternative: Show morning nap timing if available
+elif 'morning_bedtime' in available_cols:
+    morning_nap_col = available_cols['morning_bedtime']
+    
+    # Calculate population mean
+    pop_data = df.groupby('age_months')[morning_nap_col].mean()
+    pop_data_hours = pop_data.apply(convert_minutes_to_clock_time)
+    ax.plot(pop_data.index.tolist(), pop_data_hours, 'k--', linewidth=3, alpha=0.3,
+           label='Population Mean', zorder=1)
+    
+    # Plot individual trajectories
+    for i, subject in enumerate(longitudinal_subjects):
+        subj_data = df[df['base_subject_id'] == subject].sort_values('age_months')
+        if morning_nap_col in subj_data.columns:
+            nap_times_hours = subj_data[morning_nap_col].apply(convert_minutes_to_clock_time)
+            ax.plot(subj_data['age_months'], nap_times_hours,
+                   marker='o', markersize=8, linewidth=2, alpha=0.7,
+                   color=colors[i], label=subject, zorder=2)
+    
+    ax.set_xlabel('Age (months)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Morning Nap Start Time', fontsize=12, fontweight='bold')
+    ax.set_title('Morning Nap Timing', fontsize=13, fontweight='bold')
+    ax.legend(fontsize=8, loc='best')
+    ax.grid(True, alpha=0.3)
+    
+    # Format y-axis to show clock times
+    yticks = np.arange(8, 13, 1)
+    ax.set_yticks(yticks)
+    ax.set_yticklabels([f"{int(h)}:00" for h in yticks])
+
+else:
+    ax.text(0.5, 0.5, 'Time in bed data not available\n(requires bedtime and waketime)', 
+           transform=ax.transAxes, ha='center', va='center', fontsize=12)
+    ax.set_xlabel('Age (months)', fontsize=12, fontweight='bold')
+    ax.set_title('Sleep Opportunity Window', fontsize=13, fontweight='bold')
+
+plt.tight_layout()
+plt.savefig(f'{output_folder}/figure2_sleep_timing_trajectories.png', dpi=300, bbox_inches='tight')
+print(f"  ✓ Saved: figure2_sleep_timing_trajectories.png")
+plt.close()
+
+# ============================================================================
+# FIGURE 3: Within-Subject vs Between-Subject Variability (formerly Figure 2)
+# ============================================================================
+
+print("Creating Figure 3: Within vs Between Subject Variability...")
 
 fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
@@ -226,15 +544,15 @@ ax.text(0.5, 0.95, 'High = Stable trait\nLow = Developmental change',
        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 
 plt.tight_layout()
-plt.savefig(f'{output_folder}/figure2_variance_decomposition.png', dpi=300, bbox_inches='tight')
-print(f"  ✓ Saved: figure2_variance_decomposition.png")
+plt.savefig(f'{output_folder}/figure3_variance_decomposition.png', dpi=300, bbox_inches='tight')
+print(f"  ✓ Saved: figure3_variance_decomposition.png")
 plt.close()
 
 # ============================================================================
-# FIGURE 3: Individual Subject Cards (Detailed Profiles)
+# FIGURE 4: Individual Subject Cards (formerly Figure 3)
 # ============================================================================
 
-print("Creating Figure 3: Individual Subject Profile Cards...")
+print("Creating Figure 4: Individual Subject Profile Cards...")
 
 # Create one detailed figure per subject
 for subject in longitudinal_subjects:
@@ -318,8 +636,8 @@ for subject in longitudinal_subjects:
            bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.3))
     
     plt.tight_layout()
-    plt.savefig(f'{output_folder}/profile_{subject}.png', dpi=300, bbox_inches='tight')
-    print(f"  ✓ Saved: profile_{subject}.png")
+    plt.savefig(f'{output_folder}/figure4_profile_{subject}.png', dpi=300, bbox_inches='tight')
+    print(f"  ✓ Saved: figure4_profile_{subject}.png")
     plt.close()
 
 # ============================================================================
@@ -370,4 +688,9 @@ print("\n" + "="*70)
 print("COMPLETE!")
 print("="*70)
 print(f"All longitudinal visualizations saved to: {output_folder}")
+print("\nGenerated figures:")
+print("  - Figure 1: Individual Sleep Duration Trajectories")
+print("  - Figure 2: Individual Sleep Timing Trajectories (NEW)")
+print("  - Figure 3: Within vs Between Subject Variability")
+print("  - Figure 4: Individual Subject Profile Cards")
 print("="*70)
